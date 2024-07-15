@@ -1,12 +1,14 @@
 import spotipy 
 from spotipy.oauth2 import SpotifyOAuth
-from flask import Flask, request, url_for, session, redirect
+from flask import Flask, request, url_for, session, redirect, render_template
 from flask_session import Session
 import time
 from dotenv import load_dotenv
 import os
 
-import json # just for testing
+from all_tracks import all_tracks
+
+import cProfile
 
 load_dotenv()
 CLIENT_ID = os.getenv('SPOTIPY_CLIENT_ID')
@@ -15,6 +17,7 @@ SECRET_KEY = os.getenv('FLASK_SECRET_KEY')
 
 # initialize Flask app
 app = Flask(__name__)
+
 
 # set the name of the session cookie
 app.config['SESSION_COOKIE_NAME'] = 'Spotify Cookie'
@@ -65,10 +68,11 @@ def wait_page():
         return redirect("/")
 
     # create a Spotipy instance with the access token
-    sp = spotipy.Spotify(auth=token_info['access_token'])
+    spotify_user = spotipy.Spotify(auth=token_info['access_token'])
     
     # build dictionary of user tracks and genres
-    get_user_tracks(sp)
+    all_tracks_instance = all_tracks()
+    get_user_tracks(spotify_user, all_tracks_instance)
 
     return redirect(url_for('sort_songs'))
 
@@ -85,37 +89,41 @@ def sort_songs():
         return redirect("/")
 
     # create a Spotipy instance with the access token
-    sp = spotipy.Spotify(auth=token_info['access_token'])
+    spotify_user = spotipy.Spotify(auth=token_info['access_token'])
     
     # retrieve tracks if the user has already 
-    all_tracks = session.get('ALL_TRACKS')
+    session_all_tracks = session.get('ALL_TRACKS') 
     last_fetched = session.get('LAST_FETCHED')
     CACHE_DURATION = 3600 # only save for an hour
-
+    
     # if cache duration is up or user hasn't fetched tracks already 
-    if not all_tracks or (time.time() - last_fetched > CACHE_DURATION):
+    if not session_all_tracks or (time.time() - last_fetched > CACHE_DURATION):
         return redirect(url_for('wait_page'))
 
     # this would be in the UI anyways
-    genre_keys = all_tracks.keys()
-    print("Available Genres: ", genre_keys)
+    session_all_tracks.find_top_genres()
+    user_top_genres = session_all_tracks.top_genres
+    print("Available Genres: ", user_top_genres)
     genre_selected = input("Please select a genre from the list above: \n")
     
-    # get the list of songs in the chosen genre
-    genre_playlist_list = all_tracks.get(genre_selected) # check to make sure not none
+    # get the list of songs in the chosen genre [shouldn't ever be none but maybe add case]
+    genre_playlist_list = session_all_tracks.all_tracks_dict.get(genre_selected) 
 
     # call function to create new playlist
-    new_playlist_url = create_genre_playlist(sp, genre_selected, genre_playlist_list)
+    new_playlist_url = create_genre_playlist(spotify_user, genre_selected, genre_playlist_list)
     print(new_playlist_url)
 
-    # would have to adjust this with the UI
-    next_choice = input("Do you want to pick another? ")
-    if next_choice == 'yes':
-        sort_songs()
+    # # would have to adjust this with the UI
+    #next_choice = input("Do you want to pick another? ")
+    #if next_choice == 'yes':
+    #     sort_songs()
 
-    
-    return ('New playlist created!') 
+    return redirect(url_for('print_cache'))
 
+@app.route('/printCache')
+def print_cache():
+    tracks = session.get('ALL_TRACKS') 
+    return(tracks.all_tracks_dict)
 
 # -- HELPER FUNCTIONS --
 # GET TOKEN INFO FROM SESSION
@@ -145,55 +153,57 @@ def create_spotify_oauth(): #  want to upload image at somepoint
     )
 
 # GETS ALL USER TRACKS AND CREATES DICTIONARY
-def get_user_tracks(sp_user):
+def get_user_tracks(spotify_user, all_tracks_instance):
+ 
+    all_results_items = []
 
-    offset = 0 # index to offset by 
-    TRACKS_LIMIT = 50
-    tracks_results = [] # temporarily hold the list returned from current_user_saved_tracks
-    all_tracks = {} # saves all tracks according to the genre
-           
+    tracks_results = spotify_user.current_user_saved_tracks()
+       
+    all_results_items.extend(tracks_results['items'])
+    
     # loop through all user tracks 
-    while True:
-        tracks_results = sp_user.current_user_saved_tracks(limit=TRACKS_LIMIT, offset=offset)
-        tracks_results_items = tracks_results['items']
+    while tracks_results['next']:
+        tracks_results = spotify_user.next(tracks_results)
+        all_results_items.extend(tracks_results['items'])
+ 
+    # gets only first 50 user playlists 
+    # all_user_playlists = spotify_user.current_user_playlists()['items']
+
+    # for playlist in all_user_playlists: 
+    #     print(playlist['name'])
+    #     curr_playlist_id = playlist['id']
+       
+    #     playlist_results = spotify_user.playlist_tracks(
+    #         curr_playlist_id, 
+    #         fields='items(track(name,uri,artists(id))),next'
+    #     )
+
+    #     all_results_items.extend(playlist_results['items'])
+
+    #     while playlist_results['next']:
+    #         playlist_results = spotify_user.next(playlist_results)
+    #         all_results_items.extend(playlist_results['items'])
         
-        for track in tracks_results_items:
-            curr_song = track['track']['uri']
-            artist_id = track['track']['artists'][0]['id']
-            artist_info = sp_user.artist(artist_id)
-            for genre in artist_info['genres']:
-                # add new genre if it doesn't exist
-                if genre not in all_tracks:
-                    all_tracks[genre] = (0, [])
+    for track in all_results_items:
+        all_tracks_instance.add_track(track, spotify_user)
+    print('tracks added')
 
-                # make sure there are not duplicates
-                if curr_song not in all_tracks[genre][1]:
-                    all_tracks[genre] = (all_tracks[genre][0] + 1, all_tracks[genre][1] + [curr_song])
+    # save the tracks to a session variable so that it is only done once
+    session['ALL_TRACKS'] = all_tracks_instance
+    session['LAST_FETCHED'] = time.time()
 
-        # add offset if there are more tracks
-        if not tracks_results['next']:
-            break
-
-        offset += TRACKS_LIMIT
-
-        # save the tracks to a session variable so that it is only done once
-        session['ALL_TRACKS'] = all_tracks
-        session['LAST_FETCHED'] = time.time()
-
-        # with open("tracks.txt", "w") as fp:
-        #     json.dump(all_tracks, fp)  # encode dict into JSON
-
-    return all_tracks
+    # might have to change because its an object
+    return all_tracks_instance
 
 # CREATES NEW PLAYLIST 
-def create_genre_playlist(sp_user, genre_selected, genre_playlist_list):
+def create_genre_playlist(spotify_user, genre_selected, genre_playlist_list):
 
     # get user id
-    user_id = sp_user.current_user()['id']
+    user_id = spotify_user.current_user()['id']
 
     # find playlist to add to 
     new_playlist_id = None
-    current_playlists =  sp_user.current_user_playlists()['items']
+    current_playlists =  spotify_user.current_user_playlists()['items']
 
     for playlist in current_playlists:
         if (playlist['name'] == 'of the ' + genre_selected + ' sort'):
@@ -201,18 +211,18 @@ def create_genre_playlist(sp_user, genre_selected, genre_playlist_list):
     
     # create new playlist if it doesn't exist
     if new_playlist_id is None: 
-        new_playlist = sp_user.user_playlist_create(user_id, 'of the ' + genre_selected + ' sort', True)
+        new_playlist = spotify_user.user_playlist_create(user_id, 'of the ' + genre_selected + ' sort', False)
         new_playlist_id = new_playlist['id'] 
 
     # make sure user can only choose one from the list in UI anyways
     if not genre_playlist_list: 
         return ("No songs in genre")
     
-    sp_user.user_playlist_add_tracks(user_id, new_playlist_id, genre_playlist_list)
+    spotify_user.user_playlist_add_tracks(user_id, new_playlist_id, genre_playlist_list)
 
     new_playlist_url = new_playlist['external_urls']['spotify']
 
     return new_playlist_url
 
-app.run(debug=True)
-
+if __name__ == '__main__':
+    app.run(debug=True)
