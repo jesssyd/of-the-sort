@@ -1,0 +1,16 @@
+:root {
+    --body-sans-serif: 'Work Sans';
+    --light-green: #DDE5B6;
+    --main-black: #170F11;
+
+}
+
+.body, html *{
+    font-family: var(--body-sans-serif);
+    color: var(--main-black);
+
+}
+
+.btn {
+    background-color: var(--light-green);
+}

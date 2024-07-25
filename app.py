@@ -27,8 +27,7 @@ app.config['SESSION_COOKIE_NAME'] = 'Spotify Cookie'
 app.secret_key = SECRET_KEY
 
 # configure the flask session for server side session storage 
-app.config['SESSION_TYPE'] = 'redis' #originally filesystem
-# app.config['SESSION_TYPE'] = 'filesystem' #originally filesystem
+app.config['SESSION_TYPE'] = 'redis' 
 
 redis_client = redis.Redis(host='localhost', port=6379, db=0)
 app.config['SESSION_REDIS'] = redis_client
@@ -53,15 +52,15 @@ def login():
 @app.route('/redirect')
 def redirect_page():
     # clear the session
-    session.clear() # session.pop('the thing', default=None)
+    session.clear() 
     # get the authorization code from the request parameters
     code = request.args.get('code')
     # exchange the authorization code for an access token and refresh token
     token_info = create_spotify_oauth().get_access_token(code)
     # save the token info in the session
     session[TOKEN_INFO] = token_info
-    # redirect the user to the sort_songs route redirect(url_for('sort_songs',_external=True))
-    return redirect(url_for('wait_page')) # external?
+     
+    return redirect(url_for('wait_page')) 
 
 # PAGE WHERE USER WAITS FOR TRACKS TO BE RETRIEVED
 @app.route('/wait')
@@ -106,29 +105,21 @@ def sort_songs():
     CACHE_DURATION = 3600 # only save for an hour
     
     # if cache duration is up or user hasn't fetched tracks already 
-    # ** session_info_dict or all tracks
     if not session_info_dict or (time.time() - last_fetched > CACHE_DURATION):
         return redirect(url_for('wait_page'))
 
-    # this would be in the UI anyways
     print("Available Genres: ", session_top_genres)
     genre_selected = input("Please select a genre from the list above: \n")
     
     # get the list of songs in the chosen genre [shouldn't ever be none but maybe add case]
     genre_playlist_list = session_all_tracks.get(genre_selected) 
-    print(len(genre_playlist_list))
+    
     # call function to create new playlist
     new_playlist_url = create_genre_playlist(spotify_user, genre_selected, genre_playlist_list)
-    print(new_playlist_url)
+    print(len(genre_playlist_list), " songs added!")
+    print("Here's the link: ", new_playlist_url)
 
     return session_all_tracks
-
-    # would have to adjust this with the UI
-    #next_choice = input("Do you want to pick another? ")
-    #if next_choice == 'yes':
-    #     sort_songs()
-
-    #return "all done"
 
 # -- HELPER FUNCTIONS --
 # GET TOKEN INFO FROM SESSION
@@ -149,7 +140,7 @@ def get_token():
     return token_info
 
 # CREATE THE SPOITIFY OAUTH
-def create_spotify_oauth(): #  want to upload image at somepoint
+def create_spotify_oauth(): 
     return SpotifyOAuth(
         client_id = CLIENT_ID,
         client_secret = CLIENT_SECRET,
@@ -197,8 +188,8 @@ def get_user_tracks(spotify_user, all_tracks_instance):
     session['ALL_TRACKS'] = session_info_dict
     session['LAST_FETCHED'] = time.time()
     print('returning to next page')
-    # might have to change because its an object
-    return all_tracks_instance
+     
+    return "All Done!"
 
 # CREATES NEW PLAYLIST 
 def create_genre_playlist(spotify_user, genre_selected, genre_playlist_list):
@@ -247,21 +238,21 @@ def create_genre_playlist(spotify_user, genre_selected, genre_playlist_list):
         sorted_playlist_id = new_playlist['id'] 
 
     # this helps for when all songs overlap in existing playlist
-    if not genre_playlist_list: 
-        return ("No songs in genre or all songs already added")
-    
-    # spotify allows only 100 songs to be added at a time, add in 100 song sections
-    sections = [genre_playlist_list[i:i + 100] for i in range(0, len(genre_playlist_list), 100)]
+    if genre_playlist_list: 
+        # spotify allows only 100 songs to be added at a time, add in 100 song sections
+        sections = [genre_playlist_list[i:i + 100] for i in range(0, len(genre_playlist_list), 100)]
 
-    for section in sections:
-        spotify_user.playlist_add_items(sorted_playlist_id, section)
+        for section in sections:
+            spotify_user.playlist_add_items(sorted_playlist_id, section)
 
-    # would have to just access url seperately returns as json
-    new_playlist_url = spotify_user.playlist(
-        sorted_playlist_id, 
-        fields='external_urls(spotify)'
-    )['spotify']
-    
+        # would have to just access url seperately returns as json
+        new_playlist_url = spotify_user.playlist(
+            sorted_playlist_id, 
+            fields='external_urls(spotify)'
+        )
+    else:
+        print("No songs in genre or songs already added")
+        
     return new_playlist_url
 
 if __name__ == '__main__':

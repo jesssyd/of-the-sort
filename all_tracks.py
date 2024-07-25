@@ -14,10 +14,11 @@ class all_tracks:
  
         if curr_song is None or 'uri' not in curr_song:
             return
-        
-        print(curr_song['name'], '\n')
+         
         song_uri = curr_song['uri']
-        artist_id = curr_song['artists'][0]['id'] # this only handles the first artist also
+        
+        # only gets genres from the 
+        artist_id = curr_song['artists'][0]['id'] 
 
         # handle if its an episode or local file, just skip to next 
         if not artist_id: 
